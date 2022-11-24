@@ -1,0 +1,211 @@
+//! zinc
+library StringFunctions {
+    constant real MessageDefaultTime = 60;
+    // RAW
+    constant string Alphabet = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    integer AlphabetValue[];
+    string AlphabetIndex[];
+    // Player Color
+    string PlayerColor[];
+    
+    public {
+        // Message
+        function MessageTimed(string str, real time){ DisplayTimedTextToPlayer(GetLocalPlayer(), 0, 0, time, str); }
+        function Message(string str) { MessageTimed(str, MessageDefaultTime); }
+        function MessageForPlayerTimed(player p, string str, real time){
+            integer i;
+            for(0 <= i < bj_MAX_PLAYER_SLOTS){
+                if (GetLocalPlayer() == Player(i)){
+                    Message(str);
+                }
+            }
+        }
+        function MessageForPlayer(player p, string str){ MessageForPlayerTimed(p, str, MessageDefaultTime); }
+        
+        // Clear Message
+        function ClearTextMessagesForPlayer(player p){ if (GetLocalPlayer() == p){ ClearTextMessages(); } }
+        
+        // Player Name
+        function GetPlayerColorString(player p) -> string { return PlayerColor[GetPlayerId(p)]; }
+        function GetPlayerNameColored(player p) -> string { return GetPlayerColorString(p) + GetPlayerName(p) + "|r"; }
+        
+        // Trim
+        function LTrim(string str, string found) -> string {
+            integer i, len = StringLength(str), s = 0;
+            for(0 <= i < len){
+                if (SubString(str, i, i + 1) == found){ s = s + 1;}
+                else { break; }
+            }
+            return SubString(str, s, len);
+        }
+        function RTrim(string str, string found) -> string {
+            integer i, len = StringLength(str), e = len;
+            for (len > i >= 0){
+                if (SubString(str, i, i + 1) == found){ e = e - 1; }
+                else { break; }
+            }
+            return SubString(str, 0, e);
+        }
+        function Trim(string str, string found) -> string {
+            str = LTrim(str, found);
+            str = RTrim(str, found);
+            return str;
+        }
+        
+        // B2S
+        function B2S(boolean b) -> string {
+            if (b) { return "true"; }
+            return "false";
+        }
+        
+        // RAW
+        function RAW2S(integer ObjectId) -> string {
+            integer i = 0, j = 4;
+            string result = "";
+            
+            while(j > 0){
+                i = R2I(ObjectId/AlphabetValue[j]);
+                result = result + AlphabetIndex[i-31];
+                ObjectId = ObjectId - i*AlphabetValue[j];
+                j = j - 1;
+            }
+            return result;
+        }
+        function S2RAW(string ObjectId) -> integer {
+            integer length = StringLength(ObjectId);
+            integer result = 0;
+            integer i = 0;
+            integer j = 0;
+            string objectPart;
+            
+            if (length != 4 ){ return 0; }
+            while (true) {
+                objectPart = SubString(ObjectId, j, j + 1);
+                while(true){
+                    i = i + 1;
+                    if (AlphabetIndex[i] == objectPart) { break; }
+                }
+                result = result + (i+31)*AlphabetValue[4-j];
+                j = j + 1;
+                i = 0;
+                if (j > 4) { break; }
+            }
+                
+            return result;
+        }
+        
+        // Replace
+        function StringReplaceCounted(string str, string found, string replace, integer count) -> string {
+            integer slen = StringLength(str);
+            integer flen = StringLength(found);
+            integer rlen = StringLength(replace);
+            integer i, counted = 0;
+            string s, c, out ="";
+            
+            // check
+            if (slen == 0 || flen == 0 || flen > slen){ return str; }
+
+            if (count >= 0){ // from left
+                i = -1;
+                while (i < slen - flen){
+                    i = i + 1;
+                    s = SubString(str, i, i+flen);
+                    c = SubString(str, i, i+1);
+                    if (s == found && (count == 0 || counted < count)){
+                        i = i - 1 + flen;
+                        counted = counted + 1;
+                        out = out + replace;
+                    } else {
+                        out = out + c;
+                    }
+                }
+                out = out + SubString(str, i+1, i+1+flen);
+            } else { // from right
+                i = slen;
+                while (i >= flen){
+                    i = i - 1;
+                    s = SubString(str, i+1-flen, i+1);
+                    c = SubString(str, i, i+1);
+                    if (s == found && counted > count){
+                        i = i + 1 - flen;
+                        counted = counted - 1;
+                        out = replace + out;
+                    } else {
+                        out = c + out;
+                    }
+                }
+                out = SubString(str, 0, i) + out;
+            } 
+            return out;
+        }
+        function StringReplace(string str, string found, string replace) -> string {
+            return StringReplaceCounted(str, found, replace, 0);
+        }
+        
+        // Declension
+        function Declension(integer number, string dec1, string dec4, string dec5) -> string {
+            integer i;
+            number = ModuloInteger(IAbsBJ(number), 100);
+            if (number >= 11 && number <= 19) {
+                return dec5;
+            } else {
+                i = ModuloInteger(number, 10);
+                if (i == 1){
+                    return dec1;
+                } else if (i >= 2 && i<= 4){
+                    return dec4;
+                }
+                return dec5;
+
+            }
+            return dec1;
+        }
+        function Declenser(integer number, string found, string dec0, string dec1, string dec4, string dec5) -> string {
+            string out;
+            
+            if (number == 0){
+                out = dec0;
+            } else {
+                out = Declension(number, dec1, dec4, dec5);
+            }
+            
+            return StringReplace(out, found, I2S(number));
+        }
+        
+    }
+    
+    function onInit(){
+        integer i;
+        
+        // Player Color
+        PlayerColor[0] = "|c00FF0303"; // red
+        PlayerColor[1] = "|c000042FF"; // blue
+        PlayerColor[2] = "|c001CE6B9"; // teal
+        PlayerColor[3] = "|c00540081"; // purple
+        PlayerColor[4] = "|c00FFFC01"; // yellow
+        PlayerColor[5] = "|c00fEBA0E"; // orange
+        PlayerColor[6] = "|c0020C000"; // green
+        PlayerColor[7] = "|c00E55BB0"; // pink
+        PlayerColor[8] = "|c00959697"; // gray
+        PlayerColor[9] = "|c007EBFF1"; // lightblue
+        PlayerColor[10] = "|c00106246"; // darkgreen
+        PlayerColor[11] = "|c004E2A04"; // brown
+        PlayerColor[12] = "|cff909090";
+        PlayerColor[13] = "|cff909090";
+        PlayerColor[14] = "|cff909090";        
+        
+        // RAW
+        i = 0;
+        while (true){
+            i = i + 1;
+            AlphabetIndex[i] = SubString(Alphabet, i-1, i);
+            if (AlphabetIndex[i] == "") { break; }
+        }
+        AlphabetValue[1] = 1;
+        AlphabetValue[2] = 256;
+        AlphabetValue[3] = 256 * 256;
+        AlphabetValue[4] = 256 * 256 * 256;
+
+    }    
+}
+//! endzinc
