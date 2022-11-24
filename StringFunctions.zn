@@ -1,4 +1,7 @@
 //! zinc
+
+// https://xgm.guru/p/wc3/string-functions
+
 library StringFunctions {
     constant real MessageDefaultTime = 60;
     // RAW

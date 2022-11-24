@@ -1,0 +1,337 @@
+//! zinc
+
+// https://xgm.guru/p/wc3/plague-barrel
+
+library SpellPlagueBarrel {
+    constant integer AbilityID = 'AUpb'; // Равкод способности    
+    constant integer BarrelID = 'upbd'; // Равкод бочки
+    constant player BarrelOwner = Player(PLAYER_NEUTRAL_PASSIVE); // Владелец бочки
+    
+    constant real BarrelTimerPeriod = 0.03125; // Период таймера бочки: 1/32 секунды
+    constant real BarrelSpeedSec = 1200; // Расстояние, которое бочка пройдёт за секунду
+    constant real BarrelSpeedAdd = BarrelSpeedSec/(1/BarrelTimerPeriod); // Расстояние, которое бочка пройдёт за каждый тик таймера  
+    constant real BarrelArc = 0.30; // Изгиб параболы
+
+    constant real BarrelStartZ = 140; // Высота бочки в начале полёта
+    constant real BarrelStartD = 100; // Расстояние бочки от кастера в начале полёта
+    
+    constant real BarrelCollisionRadius = 30; // Радиус бочки для расчёта столкновений
+    
+    unit BarrelCollisionUnit; // Не трогать
+    group BarrelCollisionGroup = CreateGroup(); // Не трогать
+
+    constant real ExplodeTimerPeriod = 0.03125; // Период таймера распространения взрыва: 1/32 секунды
+    constant real ExplodeSpeedSec = 500; // Расстояние, на которое распространится взрыв за секунду
+    constant real ExplodeSpeedAdd = ExplodeSpeedSec/(1/ExplodeTimerPeriod); // Расстояние, на которое взрыв распространится за каждый тик таймера
+    
+    hashtable HT = InitHashtable(); // Хэштаблица для таймера
+    // Можете вписать туда вашу таблицу, например:
+    // hashtable HT = udg_HashTable;
+    
+    location locationZ = Location(0, 0); // Не трогать
+    
+    // Радиус захвата цели при взрыве
+    function getExplodeRange(integer level) -> integer {
+        return 350;
+    }
+    
+    // Проверка целей
+    function checkTarget(unit caster, unit target) -> boolean {
+        return (
+            caster != target // Не кастер
+            &&
+            !IsUnitType(target, UNIT_TYPE_STRUCTURE) // Не здание
+            &&
+            !IsUnitType(target, UNIT_TYPE_MECHANICAL) // Не механический
+            &&
+            !IsUnitType(target, UNIT_TYPE_MAGIC_IMMUNE) // Восприимчив к магии
+            &&
+            IsPlayerEnemy(GetOwningPlayer(caster), GetOwningPlayer(target)) // Враг
+        );
+    }
+    
+    // Функция, вызываемая при нанесении урона
+    function onDamage(unit caster, unit target, integer level){
+        real damage = level*100;
+        UnitDamageTarget(caster, target, damage, false, false, ATTACK_TYPE_MAGIC, DAMAGE_TYPE_NORMAL, WEAPON_TYPE_WHOKNOWS);
+    }
+    
+    // Функция, вызываемая при взрыве бочки 
+    function onExplode(unit caster, integer level, real x, real y, real z){
+        // caster - кто призвал бочку
+        // level - уровень способности
+        // x, y, z - координаты бочки
+    }
+    
+    // Функкция, вызываемая при попадании бочки в глубокую воду
+    function onDeepWater(unit caster, integer level, real x, real y, real z){
+        DestroyEffect(AddSpecialEffect("Objects\\Spawnmodels\\Naga\\NagaDeath\\NagaDeath.mdl", x, y));
+    }
+
+    //
+    // Заклинание
+    //
+    
+    // Polar: https://xgm.guru/p/wc3/polar
+        function GetTerrainZ(real x, real y) -> real {
+            MoveLocation(locationZ, x, y);
+            return GetLocationZ(locationZ);
+        }
+        function GetUnitZ(unit target) -> real {
+            return GetTerrainZ(GetUnitX(target), GetUnitY(target)) + GetUnitFlyHeight(target);
+        }
+        function DistanceBetweenCoords(real x1, real y1, real x2, real y2) -> real {
+            real dx = x2 - x1;
+            real dy = y2 - y1;
+            return SquareRoot(dx*dx + dy*dy);
+        }
+        function DistanceBetweenCoords3D(real x1, real y1, real z1, real x2, real y2, real z2) -> real {
+            real dx = x2 - x1;
+            real dy = y2 - y1;
+            real dz = z2 - z1;
+            return SquareRoot(dx*dx + dy*dy + dz*dz);
+        }
+        function AngleBetweenCoords(real x1, real y1, real x2, real y2) -> real {
+            return bj_RADTODEG * Atan2(y2 - y1, x2 - x1);
+        }
+        function SetUnitZ(unit target, real z) -> unit {
+            SetUnitFlyHeight(target, z - GetTerrainZ(GetUnitX(target), GetUnitY(target)), 0);
+            return target;
+        }
+        function ParabolaZ2(real zs, real ze, real h, real d, real x) -> real {
+            return (2*(zs + ze - 2*h)*(x/d - 1) + (ze - zs))*(x/d) + zs;
+        }
+    // endPolar
+    
+    function isUnitAlive(unit target) -> boolean {
+        return GetWidgetLife(target) > 0.405;
+    }
+    
+    function collision(){
+        unit u1 = GetEnumUnit();
+        unit u2 = BarrelCollisionUnit;
+        real d = DistanceBetweenCoords3D(GetUnitX(u1), GetUnitY(u1), GetUnitZ(u1), GetUnitX(u2), GetUnitY(u2), GetUnitZ(u2));
+        if (u1 != u2 && d <= BarrelCollisionRadius){
+            KillUnit(u1);
+            KillUnit(u2);
+        }
+        u1 = null;
+        u2 = null;
+    }
+    
+    function isDeepWater(real x, real y) -> boolean {
+        return (!IsTerrainPathable(x, y, PATHING_TYPE_FLOATABILITY) && IsTerrainPathable(x, y, PATHING_TYPE_WALKABILITY));
+    }
+    
+     // explode
+    struct explode {
+        unit caster;
+        group targets;
+        integer level;
+        real x, y, z, range, lim;
+
+        static method create(unit caster, integer level, real x, real y, real z) -> explode {
+            explode this = explode.allocate();
+            timer t = CreateTimer();
+            this.caster = caster;
+            this.targets = CreateGroup();
+            this.range = ExplodeSpeedAdd;
+            this.lim = getExplodeRange(level);
+            this.level = level;
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            
+            SaveInteger(HT, GetHandleId(t), 0, this);
+            TimerStart(t, ExplodeTimerPeriod, true, function explode.callback);
+            t = null;
+            return this;
+        }
+        
+        method destroy(){
+            this.caster = null;
+            GroupClear(this.targets);
+            DestroyGroup(this.targets);
+            this.targets = null;
+            this.deallocate();
+        }
+        
+        static method callback(){
+            timer t = GetExpiredTimer();
+            integer tid = GetHandleId(t);
+            explode this = LoadInteger(HT, tid, 0);
+            
+            group g = CreateGroup();
+            unit u;
+            this.range = this.range + ExplodeSpeedAdd;
+            
+            if (this.range > this.lim){
+                this.destroy();
+                PauseTimer(t);
+                DestroyTimer(t);
+                FlushChildHashtable(HT, tid);
+            } else {
+                GroupEnumUnitsInRange(g, this.x, this.y, this.range, Filter(function() -> boolean {
+                    return isUnitAlive(GetFilterUnit());
+                }));
+                
+                while(true){
+                    u = FirstOfGroup(g);
+                    if (u == null) { break; }
+                    
+                    if (
+                        !IsUnitInGroup(u, targets)
+                        &&
+                        checkTarget(this.caster, u)
+                        &&
+                        DistanceBetweenCoords3D(this.x, this.y, this.z, GetUnitX(u), GetUnitY(u), GetUnitZ(u)) <= range
+                    ){
+                        GroupAddUnit(this.targets, u);
+                        onDamage(this.caster, u, this.level);
+                    }
+                    GroupRemoveUnit(g, u);
+                }
+            }
+            
+            DestroyGroup(g); g = null;
+            u = null;
+            t = null;
+        }
+    }
+    
+    // barrel
+    struct barrel {
+        unit caster, barrel;
+        real x, y, z, zs, ze, h, a, d, l, sin, cos;
+        integer level, barrelID;
+
+        static method create(unit caster, real x, real y) -> barrel {
+            barrel this = barrel.allocate();
+            timer t = CreateTimer();
+            this.caster = caster;
+            this.level = GetUnitAbilityLevel(caster, AbilityID);
+            this.x = GetUnitX(caster);
+            this.y = GetUnitY(caster);
+            this.z = GetUnitZ(caster) + BarrelStartZ;
+            this.zs = this.z;
+            this.ze = GetTerrainZ(x, y);
+            this.a = AngleBetweenCoords(this.x, this.y, x, y);
+            this.cos = Cos(a * bj_DEGTORAD);
+            this.sin = Sin(a * bj_DEGTORAD);
+            this.x = this.x + BarrelStartD * this.cos;
+            this.y = this.y + BarrelStartD * this.sin;
+            this.d = DistanceBetweenCoords(this.x, this.y, x, y);
+            this.h = this.d*BarrelArc + RMaxBJ(this.ze, this.zs);
+            this.l = 0;
+            
+            this.barrel = CreateUnit(BarrelOwner, BarrelID, this.x, this.y, this.a);
+            SetUnitX(this.barrel, this.x);
+            SetUnitY(this.barrel, this.y);
+            SetUnitZ(this.barrel, this.z);
+            
+            GroupAddUnit(BarrelCollisionGroup, this.barrel);
+            
+            this.barrelID = GetHandleId(this.barrel);
+            SaveUnitHandle(HT, this.barrelID, 0, this.caster);
+            SaveInteger(HT, this.barrelID, 0, this.level);
+            
+            SaveInteger(HT, GetHandleId(t), 0, this);
+            TimerStart(t, BarrelTimerPeriod, true, function barrel.callback);
+            t = null;
+            return this;
+        }
+        
+        method destroy(){
+            this.caster = null;
+            this.barrel = null;
+            this.deallocate();
+        }
+        
+        static method callback(){
+            timer t = GetExpiredTimer();
+            integer tid = GetHandleId(t);
+            barrel this = LoadInteger(HT, tid, 0);
+            boolean isDestroy = false;
+            
+            if (isUnitAlive(this.barrel)){
+                this.l = this.l + BarrelSpeedAdd;
+                this.x = this.x + BarrelSpeedAdd * this.cos;
+                this.y = this.y + BarrelSpeedAdd * this.sin;
+                this.z = ParabolaZ2(this.zs, this.ze, this.h, this.d, this.l);
+                
+                if (this.z > GetTerrainZ(this.x, this.y) + BarrelCollisionRadius*2){
+                    SetUnitX(this.barrel, this.x);
+                    SetUnitY(this.barrel, this.y);
+                    SetUnitZ(this.barrel, this.z);
+                    BarrelCollisionUnit = this.barrel;
+                    ForGroup(BarrelCollisionGroup, function collision);
+                } else {
+                    if (IsUnitInGroup(this.barrel, BarrelCollisionGroup)){
+                        GroupRemoveUnit(BarrelCollisionGroup, this.barrel);
+                    }
+                    if (isDeepWater(this.x, this.y)){
+                        FlushChildHashtable(HT, GetHandleId(this.barrel));
+                        onDeepWater(this.caster, this.level, this.x, this.y, this.z);
+                        RemoveUnit(this.barrel);
+                    } else {
+                        KillUnit(this.barrel);
+                    }
+                    isDestroy = true;
+                }
+            } else {
+                isDestroy = true;
+            }
+            
+            if (isDestroy){
+                this.destroy();
+                PauseTimer(t);
+                DestroyTimer(t);
+                FlushChildHashtable(HT, tid);
+            }
+            
+            t = null;
+        }
+
+    }
+
+    function onInit(){
+        integer i;
+        trigger t;
+        
+        t = CreateTrigger();
+        for (0 <= i < bj_MAX_PLAYER_SLOTS){
+            TriggerRegisterPlayerUnitEvent(t, Player(i), EVENT_PLAYER_UNIT_SPELL_EFFECT, null);
+        }
+        TriggerAddCondition(t, Filter(function() -> boolean {
+            if (GetSpellAbilityId() == AbilityID){
+                barrel.create(GetTriggerUnit(), GetSpellTargetX(), GetSpellTargetY());
+            }
+            return false;
+        }));
+        
+        t = CreateTrigger();
+        TriggerRegisterPlayerUnitEvent(t, BarrelOwner, EVENT_PLAYER_UNIT_DEATH, null);
+        TriggerAddCondition(t, Filter(function() -> boolean {
+            return GetUnitTypeId(GetTriggerUnit()) == BarrelID;
+        }));
+        TriggerAddAction(t, function(){
+            unit u = GetTriggerUnit();
+            integer uid = GetHandleId(u);
+            GroupRemoveUnit(BarrelCollisionGroup, u);
+
+            explode.create(
+                LoadUnitHandle(HT, uid, 0),
+                LoadInteger(HT, uid, 0),
+                GetUnitX(u),
+                GetUnitY(u),
+                GetUnitZ(u)
+            );
+  
+            FlushChildHashtable(HT, uid);
+            u = null;
+        });
+        
+        t = null;
+    }
+}
+//! endzinc
